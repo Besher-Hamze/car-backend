@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { join } from 'path';
@@ -28,16 +28,21 @@ export class CarsService {
     return car.save();
   }
 
-  /** Seller path: minimal details, status=pending, hidden from public until admin publishes. */
+  /** Seller path: minimal details, status=pending, hidden from public until admin publishes.
+   *  The first uploaded file becomes the main `imageUrl`; the rest go into `images`. */
   async createBySeller(
     dto: CreateSellerCarDto,
-    imageFilename: string,
+    imageFilenames: string[],
     sellerId: string,
   ): Promise<CarDocument> {
-    const imageUrl = publicCarImagePath(imageFilename);
+    if (!imageFilenames || imageFilenames.length === 0) {
+      throw new BadRequestException('يجب رفع صورة واحدة على الأقل');
+    }
+    const [first, ...rest] = imageFilenames;
     const car = new this.carModel({
       ...dto,
-      imageUrl,
+      imageUrl: publicCarImagePath(first),
+      images: rest.map((name) => publicCarImagePath(name)),
       currency: 'USD',
       status: CarStatus.PENDING,
       sellerId: new Types.ObjectId(sellerId),
