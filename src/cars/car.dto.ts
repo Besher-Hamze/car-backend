@@ -249,6 +249,45 @@ export class CreateCarDto {
 
 export class UpdateCarDto extends PartialType(CreateCarDto) {}
 
+/** Slim payload for sellers when submitting a car for review.
+ * Only basic identity/marketing fields — admin fills in the rest. */
+export class CreateSellerCarDto {
+  @ApiProperty({ example: 'Toyota' })
+  @IsString()
+  brand: string;
+
+  @ApiProperty({ example: 'Camry' })
+  @IsString()
+  model: string;
+
+  @ApiProperty({ example: 2024 })
+  @Type(() => Number)
+  @IsNumber()
+  year: number;
+
+  @ApiProperty({ example: 18000 })
+  @Type(() => Number)
+  @IsNumber()
+  price: number;
+
+  @ApiPropertyOptional({ example: 'sedan' })
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional({ example: 'سيارة بحالة ممتازة، فحص كامل…' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
+
+export class RejectCarDto {
+  @ApiPropertyOptional({ example: 'الصورة غير واضحة، يرجى رفع صورة أفضل' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
 export class QueryCarsDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -275,6 +314,21 @@ export class QueryCarsDto {
   @IsString()
   engineType?: string;
 
+  @ApiPropertyOptional({ example: 'automatic' })
+  @IsOptional()
+  @IsString()
+  transmission?: string;
+
+  @ApiPropertyOptional({ example: 'AWD' })
+  @IsOptional()
+  @IsString()
+  driveType?: string;
+
+  @ApiPropertyOptional({ example: 'White' })
+  @IsOptional()
+  @IsString()
+  color?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
@@ -298,6 +352,85 @@ export class QueryCarsDto {
   @Type(() => Number)
   @IsNumber()
   maxYear?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  minHorsepower?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  maxHorsepower?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  minSeats?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  minMileage?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  maxMileage?: number;
+
+  /* Score-based condition filters (0..100 step 10). Sends min score. */
+  @ApiPropertyOptional({ description: '0..100 step 10' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value == null ? undefined : String(value)))
+  @Matches(SCORE_STRING)
+  minMotorCondition?: string;
+
+  @ApiPropertyOptional({ description: '0..100 step 10' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value == null ? undefined : String(value)))
+  @Matches(SCORE_STRING)
+  minElectricalCondition?: string;
+
+  @ApiPropertyOptional({ description: '0..100 step 10' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value == null ? undefined : String(value)))
+  @Matches(SCORE_STRING)
+  minOilCondition?: string;
+
+  @ApiPropertyOptional({ description: '0..100 step 10' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value == null ? undefined : String(value)))
+  @Matches(SCORE_STRING)
+  minChassisCondition?: string;
+
+  @ApiPropertyOptional({ description: '0..100 step 10' })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value == null ? undefined : String(value)))
+  @Matches(SCORE_STRING)
+  minTiresCondition?: string;
+
+  @ApiPropertyOptional({ enum: ['0', '100'] })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value == null ? undefined : String(value)))
+  @IsIn(['0', '100'])
+  engineSmokeLevel?: string;
+
+  @ApiPropertyOptional({ enum: ['full_cut', 'half_cut', 'none'] })
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value == null ? undefined : value))
+  @IsIn(['full_cut', 'half_cut', 'none'])
+  accidentHistoryType?: string;
+
+  /** 'all' = include all statuses (admin only). Otherwise restricted to specific statuses. */
+  @ApiPropertyOptional({ enum: ['pending', 'published', 'rejected', 'all'] })
+  @IsOptional()
+  @IsString()
+  status?: string;
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()

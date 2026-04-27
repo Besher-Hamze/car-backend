@@ -12,9 +12,9 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
-  @ApiOperation({ summary: 'تسجيل حساب جديد (مستخدم عادي)' })
+  @ApiOperation({ summary: 'تسجيل حساب جديد (مستخدم أو بائع)' })
   register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto.email, dto.password, dto.name);
+    return this.authService.register(dto.email, dto.password, dto.name, dto.role);
   }
 
   @Post('login')

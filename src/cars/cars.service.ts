@@ -1,36 +1,125 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { join } from 'path';
 import * as fs from 'fs';
-import { Car, CarDocument } from './car.schema';
+import { Car, CarDocument, CarStatus } from './car.schema';
 import { publicCarImagePath, CARS_UPLOAD_DIR } from './car-image-upload';
-import { CreateCarDto, QueryCarsDto, UpdateCarDto } from './car.dto';
+import {
+  CreateCarDto,
+  CreateSellerCarDto,
+  QueryCarsDto,
+  UpdateCarDto,
+} from './car.dto';
 
 @Injectable()
 export class CarsService {
   constructor(@InjectModel(Car.name) private carModel: Model<CarDocument>) { }
 
+  /** Admin path: car is created already published and fully detailed. */
   async create(createCarDto: CreateCarDto, imageFilename: string): Promise<CarDocument> {
     const { imageUrl: _ignore, ...rest } = createCarDto;
     const imageUrl = publicCarImagePath(imageFilename);
-    const car = new this.carModel({ ...rest, imageUrl });
+    const car = new this.carModel({
+      ...rest,
+      imageUrl,
+      status: CarStatus.PUBLISHED,
+    });
     return car.save();
+  }
+
+  /** Seller path: minimal details, status=pending, hidden from public until admin publishes. */
+  async createBySeller(
+    dto: CreateSellerCarDto,
+    imageFilename: string,
+    sellerId: string,
+  ): Promise<CarDocument> {
+    const imageUrl = publicCarImagePath(imageFilename);
+    const car = new this.carModel({
+      ...dto,
+      imageUrl,
+      currency: 'USD',
+      status: CarStatus.PENDING,
+      sellerId: new Types.ObjectId(sellerId),
+    });
+    return car.save();
+  }
+
+  /** All cars submitted by a given seller, newest first. */
+  async findBySeller(sellerId: string) {
+    return this.carModel
+      .find({ sellerId: new Types.ObjectId(sellerId) })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  /** Cars awaiting admin review. */
+  async findPending() {
+    return this.carModel
+      .find({ status: CarStatus.PENDING })
+      .populate('sellerId', 'name email')
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  async publish(id: string): Promise<CarDocument> {
+    const car = await this.carModel.findByIdAndUpdate(
+      id,
+      { status: CarStatus.PUBLISHED, rejectionReason: null },
+      { new: true },
+    );
+    if (!car) throw new NotFoundException('السيارة غير موجودة');
+    return car;
+  }
+
+  async reject(id: string, reason?: string): Promise<CarDocument> {
+    const car = await this.carModel.findByIdAndUpdate(
+      id,
+      { status: CarStatus.REJECTED, rejectionReason: reason },
+      { new: true },
+    );
+    if (!car) throw new NotFoundException('السيارة غير موجودة');
+    return car;
   }
 
   async findAll(query: QueryCarsDto) {
     const {
       search, brand, category, condition, engineType,
+      transmission, driveType, color,
       minPrice, maxPrice, minYear, maxYear,
+      minHorsepower, maxHorsepower, minSeats, minMileage, maxMileage,
+      minMotorCondition, minElectricalCondition, minOilCondition,
+      minChassisCondition, minTiresCondition,
+      engineSmokeLevel, accidentHistoryType,
+      status,
       page = 1, limit = 12, sortBy = 'createdAt', sortOrder = 'desc',
     } = query;
 
     const filter: any = {};
+
+    /** Status visibility:
+     *  - 'all'              → no status filter (admin)
+     *  - explicit value     → exact match (admin)
+     *  - undefined (public) → only published, including legacy docs without a status field. */
+    if (status === 'all') {
+      // no constraint
+    } else if (status) {
+      filter.status = status;
+    } else {
+      filter.$or = [
+        { status: CarStatus.PUBLISHED },
+        { status: { $exists: false } },
+      ];
+    }
+
     if (search) filter.$text = { $search: search };
     if (brand) filter.brand = { $regex: brand, $options: 'i' };
     if (category) filter.category = category;
     if (condition) filter.condition = condition;
     if (engineType) filter.engineType = engineType;
+    if (transmission) filter.transmission = transmission;
+    if (driveType) filter.driveType = driveType;
+    if (color) filter.color = { $regex: color, $options: 'i' };
 
     if (minPrice !== undefined || maxPrice !== undefined) {
       filter.price = {};
@@ -43,6 +132,40 @@ export class CarsService {
       if (minYear !== undefined) filter.year.$gte = minYear;
       if (maxYear !== undefined) filter.year.$lte = maxYear;
     }
+
+    if (minHorsepower !== undefined || maxHorsepower !== undefined) {
+      filter.horsepower = {};
+      if (minHorsepower !== undefined) filter.horsepower.$gte = minHorsepower;
+      if (maxHorsepower !== undefined) filter.horsepower.$lte = maxHorsepower;
+    }
+
+    if (minSeats !== undefined) {
+      filter.seatingCapacity = { $gte: minSeats };
+    }
+
+    if (minMileage !== undefined || maxMileage !== undefined) {
+      filter.mileage = {};
+      if (minMileage !== undefined) filter.mileage.$gte = minMileage;
+      if (maxMileage !== undefined) filter.mileage.$lte = maxMileage;
+    }
+
+    /** Scores are stored as discrete strings ('0','10'..'100').
+     * Use $in with the valid subset to avoid lexicographic comparison. */
+    const scoresAtLeast = (min: string): string[] => {
+      const n = parseInt(min, 10);
+      if (!Number.isFinite(n)) return [];
+      const out: string[] = [];
+      for (let v = n; v <= 100; v += 10) out.push(String(v));
+      return out;
+    };
+    if (minMotorCondition) filter.motorCondition = { $in: scoresAtLeast(minMotorCondition) };
+    if (minElectricalCondition) filter.electricalCondition = { $in: scoresAtLeast(minElectricalCondition) };
+    if (minOilCondition) filter.oilCondition = { $in: scoresAtLeast(minOilCondition) };
+    if (minChassisCondition) filter.chassisCondition = { $in: scoresAtLeast(minChassisCondition) };
+    if (minTiresCondition) filter.tiresCondition = { $in: scoresAtLeast(minTiresCondition) };
+
+    if (engineSmokeLevel) filter.engineSmokeLevel = engineSmokeLevel;
+    if (accidentHistoryType) filter.accidentHistoryType = accidentHistoryType;
 
     const skip = (page - 1) * limit;
     const sort: any = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
@@ -108,20 +231,31 @@ export class CarsService {
     } catch { }
   }
 
+  /** Mongo filter that matches only publicly visible cars
+   *  (legacy docs without a status field are treated as published). */
+  private publicVisibleFilter() {
+    return {
+      $or: [{ status: CarStatus.PUBLISHED }, { status: { $exists: false } }],
+    };
+  }
+
   async getBrands(): Promise<string[]> {
-    return this.carModel.distinct('brand');
+    return this.carModel.distinct('brand', this.publicVisibleFilter());
   }
 
   async getStats() {
+    const visible = this.publicVisibleFilter();
     const [totalCars, brands, categories] = await Promise.all([
-      this.carModel.countDocuments(),
-      this.carModel.distinct('brand'),
+      this.carModel.countDocuments(visible),
+      this.carModel.distinct('brand', visible),
       this.carModel.aggregate([
+        { $match: visible },
         { $group: { _id: '$category', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
       ]),
     ]);
     const priceStats = await this.carModel.aggregate([
+      { $match: visible },
       {
         $group: {
           _id: null,
@@ -140,7 +274,11 @@ export class CarsService {
   }
 
   async getFeatured(limit = 6): Promise<Car[]> {
-    return this.carModel.find({ isAvailable: true }).sort({ views: -1, rating: -1 }).limit(limit).lean() as any;
+    return this.carModel
+      .find({ isAvailable: true, ...this.publicVisibleFilter() })
+      .sort({ views: -1, rating: -1 })
+      .limit(limit)
+      .lean() as any;
   }
 
   async getSimilar(id: string, limit = 4): Promise<Car[]> {
@@ -148,6 +286,7 @@ export class CarsService {
     if (!car) throw new NotFoundException('السيارة غير موجودة');
     return this.carModel.find({
       _id: { $ne: id },
+      ...this.publicVisibleFilter(),
       $or: [{ brand: car.brand }, { category: car.category, price: { $gte: car.price * 0.8, $lte: car.price * 1.2 } }],
     }).limit(limit).lean() as any;
   }

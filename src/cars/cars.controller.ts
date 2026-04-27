@@ -1,11 +1,43 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseInterceptors, UploadedFile, UseGuards, ParseFilePipe, MaxFileSizeValidator, FileTypeValidator, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  Query,
+  UseInterceptors,
+  UploadedFile,
+  UseGuards,
+  ParseFilePipe,
+  MaxFileSizeValidator,
+  FileTypeValidator,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiConsumes, ApiBody, ApiParam, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiConsumes,
+  ApiBody,
+  ApiParam,
+  ApiBearerAuth,
+  ApiResponse,
+} from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { CarsService } from './cars.service';
-import { CreateCarDto, QueryCarsDto, UpdateCarDto } from './car.dto';
+import {
+  CreateCarDto,
+  CreateSellerCarDto,
+  QueryCarsDto,
+  RejectCarDto,
+  UpdateCarDto,
+} from './car.dto';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { carImageStorage, carImageMulterLimits } from './car-image-upload';
 
 const imageValidators = [
@@ -49,9 +81,84 @@ export class CarsController {
   })
   @ApiOperation({ summary: 'إضافة سيارة جديدة مع صورة (مسؤول فقط)' })
   @ApiResponse({ status: 201, description: 'تم إضافة السيارة بنجاح' })
-  create(@UploadedFile(new ParseFilePipe({ validators: imageValidators })) file: any, @Body() createCarDto: CreateCarDto) {
+  create(
+    @UploadedFile(new ParseFilePipe({ validators: imageValidators })) file: any,
+    @Body() createCarDto: CreateCarDto,
+  ) {
     return this.carsService.create(createCarDto, file.filename);
   }
+
+  /* ======================================================================
+   * Seller workflow
+   * ====================================================================== */
+
+  @Post('seller')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('seller', 'admin')
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('image', { storage: carImageStorage, limits: carImageMulterLimits }))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['brand', 'model', 'year', 'price', 'image'],
+      properties: {
+        image: { type: 'string', format: 'binary' },
+        brand: { type: 'string' },
+        model: { type: 'string' },
+        year: { type: 'number' },
+        price: { type: 'number' },
+        category: { type: 'string' },
+        description: { type: 'string' },
+      },
+    },
+  })
+  @ApiOperation({ summary: 'بائع: تقديم سيارة للمراجعة (تفاصيل أساسية فقط)' })
+  submitBySeller(
+    @UploadedFile(new ParseFilePipe({ validators: imageValidators })) file: any,
+    @Body() dto: CreateSellerCarDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.carsService.createBySeller(dto, file.filename, user.userId);
+  }
+
+  @Get('mine')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('seller', 'admin')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'سياراتي (للبائع)' })
+  findMine(@CurrentUser() user: any) {
+    return this.carsService.findBySeller(user.userId);
+  }
+
+  @Get('admin/pending')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'السيارات قيد المراجعة (مسؤول فقط)' })
+  findPending() {
+    return this.carsService.findPending();
+  }
+
+  @Patch(':id/publish')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'نشر السيارة (مسؤول فقط)' })
+  publish(@Param('id') id: string) {
+    return this.carsService.publish(id);
+  }
+
+  @Patch(':id/reject')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'رفض السيارة (مسؤول فقط)' })
+  reject(@Param('id') id: string, @Body() dto: RejectCarDto) {
+    return this.carsService.reject(id, dto.reason);
+  }
+
+  /* ====================================================================== */
 
   @Get()
   @ApiOperation({ summary: 'استعراض جميع السيارات مع الفلترة والبحث' })
@@ -106,7 +213,11 @@ export class CarsController {
   @UseInterceptors(FileInterceptor('image', { storage: carImageStorage, limits: carImageMulterLimits }))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'تعديل بيانات سيارة (مسؤول فقط) — صورة اختيارية' })
-  update(@Param('id') id: string, @UploadedFile(new ParseFilePipe({ fileIsRequired: false, validators: imageValidators })) file: any, @Body() updateCarDto: UpdateCarDto) {
+  update(
+    @Param('id') id: string,
+    @UploadedFile(new ParseFilePipe({ fileIsRequired: false, validators: imageValidators })) file: any,
+    @Body() updateCarDto: UpdateCarDto,
+  ) {
     return this.carsService.update(id, updateCarDto, file?.filename);
   }
 

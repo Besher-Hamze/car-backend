@@ -1,5 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Schema as MongooseSchema, Types } from 'mongoose';
+
+export enum CarStatus {
+  PENDING = 'pending',
+  PUBLISHED = 'published',
+  REJECTED = 'rejected',
+}
 
 @Schema({ timestamps: true })
 export class Car {
@@ -146,6 +152,16 @@ export class Car {
 
   @Prop({ default: 0 })
   reviewsCount: number;
+
+  /** Workflow status. Sellers submit `pending`; admin moves to `published` or `rejected`. */
+  @Prop({ enum: CarStatus, default: CarStatus.PUBLISHED, index: true })
+  status: CarStatus;
+
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', index: true })
+  sellerId?: Types.ObjectId;
+
+  @Prop({ trim: true })
+  rejectionReason?: string;
 }
 
 export type CarDocument = Car & Document;

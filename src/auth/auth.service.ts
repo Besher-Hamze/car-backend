@@ -10,16 +10,23 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async register(email: string, password: string, name: string) {
+  async register(
+    email: string,
+    password: string,
+    name: string,
+    role?: 'user' | 'seller',
+  ) {
     const existing = await this.usersService.findByEmail(email);
     if (existing) {
       throw new ConflictException('البريد الإلكتروني مستخدم بالفعل');
     }
+    /** Public registration cannot create admins; coerce to USER unless explicitly SELLER. */
+    const finalRole = role === 'seller' ? UserRole.SELLER : UserRole.USER;
     const user = await this.usersService.create({
       email,
       password,
       name,
-      role: UserRole.USER,
+      role: finalRole,
     });
     return this.buildAuthResponse(user._id.toString(), user.email, user.role, user.name);
   }
