@@ -247,7 +247,14 @@ export class CreateCarDto {
   description?: string;
 }
 
-export class UpdateCarDto extends PartialType(CreateCarDto) {}
+export class UpdateCarDto extends PartialType(CreateCarDto) {
+  /** JSON array describing final image order: `{type:'existing',url}` or `{type:'new'}`.
+   *  New files are read from the `images` multipart field in the same order as `{type:'new'}` slots. */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  imageSlots?: string;
+}
 
 /** Slim payload for sellers when submitting a car for review.
  * Only basic identity/marketing fields — admin fills in the rest. */

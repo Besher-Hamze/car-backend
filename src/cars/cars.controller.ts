@@ -8,17 +8,13 @@ import {
   Delete,
   Query,
   UseInterceptors,
-  UploadedFile,
   UploadedFiles,
   UseGuards,
-  ParseFilePipe,
-  MaxFileSizeValidator,
-  FileTypeValidator,
   HttpCode,
   HttpStatus,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiOperation,
@@ -42,16 +38,25 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { carImageStorage, carImageMulterLimits } from './car-image-upload';
 
-const imageValidators = [
-  new MaxFileSizeValidator({ maxSize: carImageMulterLimits.fileSize }),
-  new FileTypeValidator({
-    fileType: /^image\/(jpeg|png|gif|webp)$/i,
-    skipMagicNumbersValidation: true,
-  }),
-];
+/** Max images per car upload (seller submit + admin create/update). First → `imageUrl`, rest → `images`. */
+const MAX_CAR_IMAGES = 10;
 
-/** Sellers can attach up to this many images per submission. The first one becomes the main `imageUrl`. */
-const SELLER_MAX_IMAGES = 10;
+type UploadedImageFile = { filename: string; mimetype: string; size: number };
+
+function validateUploadedImages(files: UploadedImageFile[] | undefined): UploadedImageFile[] {
+  if (!files || files.length === 0) {
+    throw new BadRequestException('يرجى رفع صورة واحدة على الأقل');
+  }
+  for (const f of files) {
+    if (!/^image\/(jpeg|png|gif|webp)$/i.test(f.mimetype)) {
+      throw new BadRequestException(`صيغة الصورة غير مدعومة: ${f.mimetype}`);
+    }
+    if (f.size > carImageMulterLimits.fileSize) {
+      throw new BadRequestException('حجم الصورة يتجاوز الحد المسموح (5MB)');
+    }
+  }
+  return files;
+}
 
 @ApiTags('Cars - السيارات')
 @Controller('cars')
@@ -62,14 +67,23 @@ export class CarsController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('admin')
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('image', { storage: carImageStorage, limits: carImageMulterLimits }))
+  @UseInterceptors(
+    FilesInterceptor('images', MAX_CAR_IMAGES, {
+      storage: carImageStorage,
+      limits: carImageMulterLimits,
+    }),
+  )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['brand', 'model', 'year', 'price', 'image'],
+      required: ['brand', 'model', 'year', 'price', 'images'],
       properties: {
-        image: { type: 'string', format: 'binary' },
+        images: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'صور السيارة. الأولى = صورة رئيسية، الباقي معرض.',
+        },
         brand: { type: 'string' },
         model: { type: 'string' },
         year: { type: 'number' },
@@ -84,13 +98,12 @@ export class CarsController {
       },
     },
   })
-  @ApiOperation({ summary: 'إضافة سيارة جديدة مع صورة (مسؤول فقط)' })
+  @ApiOperation({ summary: 'إضافة سيارة جديدة مع صور (مسؤول فقط)' })
   @ApiResponse({ status: 201, description: 'تم إضافة السيارة بنجاح' })
-  create(
-    @UploadedFile(new ParseFilePipe({ validators: imageValidators })) file: any,
-    @Body() createCarDto: CreateCarDto,
-  ) {
-    return this.carsService.create(createCarDto, file.filename);
+  create(@UploadedFiles() files: UploadedImageFile[], @Body() createCarDto: CreateCarDto) {
+    const validated = validateUploadedImages(files);
+    const filenames = validated.map((f) => f.filename);
+    return this.carsService.create(createCarDto, filenames);
   }
 
   /* ======================================================================
@@ -102,7 +115,7 @@ export class CarsController {
   @Roles('seller', 'admin')
   @ApiBearerAuth()
   @UseInterceptors(
-    FilesInterceptor('images', SELLER_MAX_IMAGES, {
+    FilesInterceptor('images', MAX_CAR_IMAGES, {
       storage: carImageStorage,
       limits: carImageMulterLimits,
     }),
@@ -129,24 +142,12 @@ export class CarsController {
   })
   @ApiOperation({ summary: 'بائع: تقديم سيارة للمراجعة (تفاصيل أساسية فقط)' })
   submitBySeller(
-    @UploadedFiles() files: Array<{ filename: string; mimetype: string; size: number }>,
+    @UploadedFiles() files: UploadedImageFile[],
     @Body() dto: CreateSellerCarDto,
     @CurrentUser() user: any,
   ) {
-    if (!files || files.length === 0) {
-      throw new BadRequestException('يرجى رفع صورة واحدة على الأقل');
-    }
-    /** Validate each uploaded file: enforce mime type + max size since
-     *  ParseFilePipe operates on a single file only. */
-    for (const f of files) {
-      if (!/^image\/(jpeg|png|gif|webp)$/i.test(f.mimetype)) {
-        throw new BadRequestException(`صيغة الصورة غير مدعومة: ${f.mimetype}`);
-      }
-      if (f.size > carImageMulterLimits.fileSize) {
-        throw new BadRequestException('حجم الصورة يتجاوز الحد المسموح (5MB)');
-      }
-    }
-    const filenames = files.map((f) => f.filename);
+    const validated = validateUploadedImages(files);
+    const filenames = validated.map((f) => f.filename);
     return this.carsService.createBySeller(dto, filenames, user.userId);
   }
 
@@ -238,15 +239,50 @@ export class CarsController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('admin')
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('image', { storage: carImageStorage, limits: carImageMulterLimits }))
+  @UseInterceptors(
+    FilesInterceptor('images', MAX_CAR_IMAGES, {
+      storage: carImageStorage,
+      limits: carImageMulterLimits,
+    }),
+  )
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'تعديل بيانات سيارة (مسؤول فقط) — صورة اختيارية' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        images: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'صور جديدة فقط. استخدم imageSlots لترتيبها مع الصور الحالية.',
+        },
+        imageSlots: {
+          type: 'string',
+          description: 'JSON: [{type:"existing",url}, {type:"new"}, ...] بالترتيب النهائي',
+        },
+        brand: { type: 'string' },
+        model: { type: 'string' },
+      },
+    },
+  })
+  @ApiOperation({ summary: 'تعديل بيانات سيارة (مسؤول فقط) — صور اختيارية' })
   update(
     @Param('id') id: string,
-    @UploadedFile(new ParseFilePipe({ fileIsRequired: false, validators: imageValidators })) file: any,
+    @UploadedFiles() files: UploadedImageFile[] | undefined,
     @Body() updateCarDto: UpdateCarDto,
   ) {
-    return this.carsService.update(id, updateCarDto, file?.filename);
+    const list = files ?? [];
+    if (list.length > 0) {
+      for (const f of list) {
+        if (!/^image\/(jpeg|png|gif|webp)$/i.test(f.mimetype)) {
+          throw new BadRequestException(`صيغة الصورة غير مدعومة: ${f.mimetype}`);
+        }
+        if (f.size > carImageMulterLimits.fileSize) {
+          throw new BadRequestException('حجم الصورة يتجاوز الحد المسموح (5MB)');
+        }
+      }
+    }
+    const filenames = list.map((f) => f.filename);
+    return this.carsService.update(id, updateCarDto, filenames);
   }
 
   @Delete(':id')

@@ -16,13 +16,18 @@ import {
 export class CarsService {
   constructor(@InjectModel(Car.name) private carModel: Model<CarDocument>) { }
 
-  /** Admin path: car is created already published and fully detailed. */
-  async create(createCarDto: CreateCarDto, imageFilename: string): Promise<CarDocument> {
-    const { imageUrl: _ignore, ...rest } = createCarDto;
-    const imageUrl = publicCarImagePath(imageFilename);
+  /** Admin path: car is created already published and fully detailed.
+   *  First uploaded file → `imageUrl`, the rest → `images`. */
+  async create(createCarDto: CreateCarDto, imageFilenames: string[]): Promise<CarDocument> {
+    if (!imageFilenames || imageFilenames.length === 0) {
+      throw new BadRequestException('يجب رفع صورة واحدة على الأقل');
+    }
+    const { imageUrl: _ignore, images: _ignoreImages, ...rest } = createCarDto;
+    const [first, ...restNames] = imageFilenames;
     const car = new this.carModel({
       ...rest,
-      imageUrl,
+      imageUrl: publicCarImagePath(first),
+      images: restNames.map((name) => publicCarImagePath(name)),
       status: CarStatus.PUBLISHED,
     });
     return car.save();
@@ -197,24 +202,78 @@ export class CarsService {
     return car;
   }
 
-  async update(id: string, updateCarDto: UpdateCarDto, newImageFilename?: string): Promise<CarDocument> {
+  async update(
+    id: string,
+    updateCarDto: UpdateCarDto,
+    newImageFilenames: string[] = [],
+  ): Promise<CarDocument> {
     const existing = await this.carModel.findById(id);
     if (!existing) throw new NotFoundException(`السيارة غير موجودة`);
 
-    const { imageUrl: _stripUrl, ...rest } = updateCarDto;
+    const { imageUrl: _stripUrl, images: _stripImages, imageSlots, ...rest } = updateCarDto;
     const payload: any = { ...rest };
 
-    if (newImageFilename) {
-      const newUrl = publicCarImagePath(newImageFilename);
-      if (existing.imageUrl?.startsWith('/uploads/')) {
-        this.unlinkUploadedFile(existing.imageUrl);
+    const built = this.buildImageFieldsFromSlots(imageSlots, newImageFilenames);
+    if (built) {
+      const oldUrls = [existing.imageUrl, ...(existing.images || [])].filter(Boolean) as string[];
+      const newUrls = [built.imageUrl, ...built.images];
+      for (const url of oldUrls) {
+        if (url.startsWith('/uploads/') && !newUrls.includes(url)) {
+          this.unlinkUploadedFile(url);
+        }
       }
-      payload.imageUrl = newUrl;
+      payload.imageUrl = built.imageUrl;
+      payload.images = built.images;
     }
 
     const car = await this.carModel.findByIdAndUpdate(id, payload, { new: true });
     if (!car) throw new NotFoundException(`السيارة غير موجودة`);
     return car;
+  }
+
+  /** Resolve final `imageUrl` + `images` from optional slot JSON and newly uploaded files. */
+  private buildImageFieldsFromSlots(
+    imageSlotsJson: string | undefined,
+    newFilenames: string[],
+  ): { imageUrl: string; images: string[] } | null {
+    if (!imageSlotsJson) {
+      if (!newFilenames.length) return null;
+      const [first, ...rest] = newFilenames;
+      return {
+        imageUrl: publicCarImagePath(first),
+        images: rest.map((name) => publicCarImagePath(name)),
+      };
+    }
+
+    let slots: Array<{ type: string; url?: string }>;
+    try {
+      slots = JSON.parse(imageSlotsJson);
+    } catch {
+      throw new BadRequestException('صيغة imageSlots غير صالحة');
+    }
+    if (!Array.isArray(slots) || slots.length === 0) {
+      throw new BadRequestException('يجب الاحتفاظ بصورة واحدة على الأقل');
+    }
+
+    let newIdx = 0;
+    const urls: string[] = [];
+    for (const slot of slots) {
+      if (slot.type === 'existing' && slot.url) {
+        urls.push(slot.url);
+      } else if (slot.type === 'new') {
+        if (newIdx >= newFilenames.length) {
+          throw new BadRequestException('عدد الصور الجديدة لا يطابق الطلب');
+        }
+        urls.push(publicCarImagePath(newFilenames[newIdx++]));
+      }
+    }
+    if (newIdx !== newFilenames.length) {
+      throw new BadRequestException('عدد الصور الجديدة لا يطابق الطلب');
+    }
+    if (urls.length === 0) {
+      throw new BadRequestException('يجب الاحتفاظ بصورة واحدة على الأقل');
+    }
+    return { imageUrl: urls[0], images: urls.slice(1) };
   }
 
   async remove(id: string): Promise<void> {
