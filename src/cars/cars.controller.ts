@@ -222,6 +222,13 @@ export class CarsController {
     return this.carsService.seedSampleData();
   }
 
+  @Get(':id/evaluate-price')
+  @ApiOperation({ summary: 'تقييم سعر السيارة بالذكاء الاصطناعي (سوق حلب)' })
+  @ApiParam({ name: 'id', description: 'معرف السيارة' })
+  evaluatePrice(@Param('id') id: string) {
+    return this.carsService.evaluatePrice(id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'تفاصيل سيارة محددة' })
   @ApiParam({ name: 'id', description: 'معرف السيارة' })

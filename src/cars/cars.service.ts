@@ -11,10 +11,27 @@ import {
   QueryCarsDto,
   UpdateCarDto,
 } from './car.dto';
+import { PriceEvaluationService } from '../price-evaluation/price-evaluation.service';
+import {
+  carDocumentToEvaluateDto,
+  createCarDtoToEvaluateDto,
+} from '../price-evaluation/car-to-evaluate.dto';
+import { fetchAiFields } from '../price-evaluation/apply-ai-fields';
 
 @Injectable()
 export class CarsService {
-  constructor(@InjectModel(Car.name) private carModel: Model<CarDocument>) { }
+  constructor(
+    @InjectModel(Car.name) private carModel: Model<CarDocument>,
+    private readonly priceEvaluationService: PriceEvaluationService,
+  ) { }
+
+  private async withAiEvaluation<T extends Record<string, unknown>>(
+    payload: T,
+    evaluateDto: ReturnType<typeof createCarDtoToEvaluateDto>,
+  ): Promise<T> {
+    const ai = await fetchAiFields(this.priceEvaluationService, evaluateDto);
+    return { ...payload, ...ai };
+  }
 
   /** Admin path: car is created already published and fully detailed.
    *  First uploaded file → `imageUrl`, the rest → `images`. */
@@ -24,12 +41,14 @@ export class CarsService {
     }
     const { imageUrl: _ignore, images: _ignoreImages, ...rest } = createCarDto;
     const [first, ...restNames] = imageFilenames;
-    const car = new this.carModel({
+    const base = {
       ...rest,
       imageUrl: publicCarImagePath(first),
       images: restNames.map((name) => publicCarImagePath(name)),
       status: CarStatus.PUBLISHED,
-    });
+    };
+    const withAi = await this.withAiEvaluation(base, createCarDtoToEvaluateDto(createCarDto));
+    const car = new this.carModel(withAi);
     return car.save();
   }
 
@@ -44,14 +63,16 @@ export class CarsService {
       throw new BadRequestException('يجب رفع صورة واحدة على الأقل');
     }
     const [first, ...rest] = imageFilenames;
-    const car = new this.carModel({
+    const base = {
       ...dto,
       imageUrl: publicCarImagePath(first),
       images: rest.map((name) => publicCarImagePath(name)),
       currency: 'USD',
       status: CarStatus.PENDING,
       sellerId: new Types.ObjectId(sellerId),
-    });
+    };
+    const withAi = await this.withAiEvaluation(base, createCarDtoToEvaluateDto(dto));
+    const car = new this.carModel(withAi);
     return car.save();
   }
 
@@ -73,9 +94,15 @@ export class CarsService {
   }
 
   async publish(id: string): Promise<CarDocument> {
+    const existing = await this.carModel.findById(id);
+    if (!existing) throw new NotFoundException('السيارة غير موجودة');
+    const ai = await fetchAiFields(
+      this.priceEvaluationService,
+      carDocumentToEvaluateDto(existing),
+    );
     const car = await this.carModel.findByIdAndUpdate(
       id,
-      { status: CarStatus.PUBLISHED, rejectionReason: null },
+      { status: CarStatus.PUBLISHED, rejectionReason: null, ...ai },
       { new: true },
     );
     if (!car) throw new NotFoundException('السيارة غير موجودة');
@@ -197,9 +224,25 @@ export class CarsService {
   }
 
   async findOne(id: string): Promise<CarDocument> {
-    const car = await this.carModel.findByIdAndUpdate(id, { $inc: { views: 1 } }, { new: true });
+    let car = await this.carModel.findByIdAndUpdate(id, { $inc: { views: 1 } }, { new: true });
     if (!car) throw new NotFoundException(`السيارة غير موجودة`);
-    return car;
+    if (!car.ai_lable_price) {
+      const ai = await fetchAiFields(
+        this.priceEvaluationService,
+        carDocumentToEvaluateDto(car),
+      );
+      if (ai.ai_lable_price) {
+        car = await this.carModel.findByIdAndUpdate(id, ai, { new: true });
+      }
+    }
+    return car!;
+  }
+
+  /** تقييم سعر سيارة محفوظة — يمرّر كل مواصفاتها للـ ML. */
+  async evaluatePrice(id: string) {
+    const car = await this.carModel.findById(id);
+    if (!car) throw new NotFoundException('السيارة غير موجودة');
+    return this.priceEvaluationService.evaluate(carDocumentToEvaluateDto(car));
   }
 
   async update(
@@ -226,7 +269,12 @@ export class CarsService {
       payload.images = built.images;
     }
 
-    const car = await this.carModel.findByIdAndUpdate(id, payload, { new: true });
+    existing.set(payload);
+    const withAi = await this.withAiEvaluation(
+      payload,
+      carDocumentToEvaluateDto(existing),
+    );
+    const car = await this.carModel.findByIdAndUpdate(id, withAi, { new: true });
     if (!car) throw new NotFoundException(`السيارة غير موجودة`);
     return car;
   }
@@ -356,12 +404,29 @@ export class CarsService {
   }
 
   async seedSampleData() {
-    // Logic as seen in dist/cars/cars.service.js
-    // ... skipping full list for brevity but including structure
     const existing = await this.carModel.countDocuments();
     if (existing > 0) return { message: 'البيانات موجودة بالفعل', count: existing };
-    const sampleCars = [/* reconstructed from JS ... */];
-    const result = await this.carModel.insertMany(sampleCars);
-    return { message: 'تم إضافة البيانات التجريبية بنجاح', count: result.length };
+
+    const seedPath = join(__dirname, 'data', 'aleppo-seed.json');
+    if (!fs.existsSync(seedPath)) {
+      throw new BadRequestException(
+        'ملف بيانات حلب غير موجود. شغّل: python ml-service/scripts/generate_data.py',
+      );
+    }
+
+    const raw = fs.readFileSync(seedPath, 'utf-8');
+    const sampleCars = JSON.parse(raw) as Record<string, unknown>[];
+
+    const cleaned = sampleCars.map(({ fairPrice, priceRatio, priceLabel, priceLabelAr, ...car }) => ({
+      ...car,
+      status: CarStatus.PUBLISHED,
+    }));
+
+    const result = await this.carModel.insertMany(cleaned);
+    return {
+      message: 'تم إضافة بيانات سيارات حلب التجريبية بنجاح',
+      count: result.length,
+      city: 'حلب',
+    };
   }
 }

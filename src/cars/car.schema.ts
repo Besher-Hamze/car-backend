@@ -138,6 +138,10 @@ export class Car {
   @Prop({ trim: true })
   interiorColor: string;
 
+  /** وارد: gulf | american | korean | local | … (لتقييم AI) */
+  @Prop({ trim: true })
+  imported?: string;
+
   @Prop({ default: true })
   isAvailable: boolean;
 
@@ -162,6 +166,16 @@ export class Car {
 
   @Prop({ trim: true })
   rejectionReason?: string;
+
+  /** تقييم السعر بالذكاء الاصطناعي — very_cheap | cheap | fair | expensive | very_expensive */
+  @Prop({ trim: true, index: true })
+  ai_lable_price?: string;
+
+  @Prop({ trim: true })
+  ai_lable_price_ar?: string;
+
+  @Prop()
+  ai_fair_price?: number;
 }
 
 export type CarDocument = Car & Document;

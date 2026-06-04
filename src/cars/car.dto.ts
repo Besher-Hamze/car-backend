@@ -241,6 +241,14 @@ export class CreateCarDto {
   @IsString()
   interiorColor?: string;
 
+  @ApiPropertyOptional({
+    example: 'gulf',
+    description: 'وارد السيارة: gulf | american | korean | local | european | …',
+  })
+  @IsOptional()
+  @IsString()
+  imported?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
