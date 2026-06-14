@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { Types } from 'mongoose';
 import { Car, CarDocument } from '../cars/car.schema';
 
 type CompareField = {
@@ -10,6 +11,10 @@ type CompareField = {
   category: string;
   lowerIsBetter: boolean;
   format?: (v: unknown) => string | number | null;
+};
+
+type ComparisonRow = CompareField & {
+  values: Array<{ carId: Types.ObjectId; value: unknown; isBest: boolean }>;
 };
 
 const AI_LABEL_AR: Record<string, string> = {
@@ -97,9 +102,7 @@ export class ComparisonService {
           }),
         };
       })
-      .filter(Boolean) as NonNullable<
-      ReturnType<typeof comparisonFields.map>[number]
-    >[];
+      .filter((row): row is ComparisonRow => row != null);
 
     const weights: Record<string, number> = {
       performance: 25,
@@ -115,7 +118,6 @@ export class ComparisonService {
       let totalWeight = 0;
 
       for (const field of comparisonData) {
-        if (!field) continue;
         const weight = weights[field.category] || 5;
         const carValue = field.values.find((v) => String(v.carId) === String(car._id));
         if (carValue?.isBest) score += weight;

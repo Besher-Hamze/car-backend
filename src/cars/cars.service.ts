@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, PipelineStage, Types } from 'mongoose';
 import { join } from 'path';
 import * as fs from 'fs';
 import { Car, CarDocument, CarStatus } from './car.schema';
@@ -44,8 +44,7 @@ export class CarsService {
     if (!imageFilenames || imageFilenames.length === 0) {
       throw new BadRequestException('يجب رفع صورة واحدة على الأقل');
     }
-    const { imageUrl: _ignore, images: _ignoreImages, documentUrls: _ignoreDocs, ...rest } =
-      createCarDto;
+    const { imageUrl: _ignore, images: _ignoreImages, ...rest } = createCarDto;
     const [first, ...restNames] = imageFilenames;
     const base = {
       ...rest,
@@ -216,7 +215,7 @@ export class CarsService {
     const skip = (page - 1) * limit;
 
     if (sortBy === 'aiMatch') {
-      const pipeline: Record<string, unknown>[] = [
+      const pipeline: PipelineStage[] = [
         { $match: filter },
         {
           $addFields: {
@@ -310,7 +309,6 @@ export class CarsService {
     const {
       imageUrl: _stripUrl,
       images: _stripImages,
-      documentUrls: _stripDocs,
       imageSlots,
       ...rest
     } = updateCarDto;
