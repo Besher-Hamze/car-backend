@@ -18,7 +18,19 @@ export const carImageStorage = diskStorage({
   },
 });
 
-export const carImageMulterLimits = { fileSize: 5 * 1024 * 1024 };
+export const carImageMulterLimits = {
+  fileSize: 5 * 1024 * 1024,
+  files: 10,
+};
+
+const allowedMime = /^image\/(jpeg|jpg|png|gif|webp|pjpeg|x-png)$/i;
+
+export function isAllowedCarImageMime(mimetype: string, originalname: string): boolean {
+  const mime = (mimetype || '').toLowerCase();
+  if (allowedMime.test(mime)) return true;
+  const ext = extname(originalname || '').toLowerCase();
+  return allowedExt.has(ext);
+}
 
 export function publicCarImagePath(filename: string) {
   return `/uploads/cars/${filename}`;

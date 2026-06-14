@@ -5,6 +5,7 @@ import { join } from 'path';
 import * as fs from 'fs';
 import { Car, CarDocument, CarStatus } from './car.schema';
 import { publicCarImagePath, CARS_UPLOAD_DIR } from './car-image-upload';
+import { publicCarDocumentPath, CAR_DOCUMENTS_DIR } from './car-document-upload';
 import {
   CreateCarDto,
   CreateSellerCarDto,
@@ -35,16 +36,23 @@ export class CarsService {
 
   /** Admin path: car is created already published and fully detailed.
    *  First uploaded file → `imageUrl`, the rest → `images`. */
-  async create(createCarDto: CreateCarDto, imageFilenames: string[]): Promise<CarDocument> {
+  async create(
+    createCarDto: CreateCarDto,
+    imageFilenames: string[],
+    documentFilenames: string[] = [],
+  ): Promise<CarDocument> {
     if (!imageFilenames || imageFilenames.length === 0) {
       throw new BadRequestException('يجب رفع صورة واحدة على الأقل');
     }
-    const { imageUrl: _ignore, images: _ignoreImages, ...rest } = createCarDto;
+    const { imageUrl: _ignore, images: _ignoreImages, documentUrls: _ignoreDocs, ...rest } =
+      createCarDto;
     const [first, ...restNames] = imageFilenames;
     const base = {
       ...rest,
+      imported: rest.imported || 'local',
       imageUrl: publicCarImagePath(first),
       images: restNames.map((name) => publicCarImagePath(name)),
+      documentUrls: documentFilenames.map((name) => publicCarDocumentPath(name)),
       status: CarStatus.PUBLISHED,
     };
     const withAi = await this.withAiEvaluation(base, createCarDtoToEvaluateDto(createCarDto));
@@ -65,6 +73,7 @@ export class CarsService {
     const [first, ...rest] = imageFilenames;
     const base = {
       ...dto,
+      imported: 'local',
       imageUrl: publicCarImagePath(first),
       images: rest.map((name) => publicCarImagePath(name)),
       currency: 'USD',
@@ -205,6 +214,50 @@ export class CarsService {
     if (accidentHistoryType) filter.accidentHistoryType = accidentHistoryType;
 
     const skip = (page - 1) * limit;
+
+    if (sortBy === 'aiMatch') {
+      const pipeline: Record<string, unknown>[] = [
+        { $match: filter },
+        {
+          $addFields: {
+            _aiSortKey: {
+              $cond: {
+                if: {
+                  $and: [
+                    { $gt: ['$ai_fair_price', 0] },
+                    { $gt: ['$price', 0] },
+                  ],
+                },
+                then: {
+                  $abs: {
+                    $subtract: [{ $divide: ['$price', '$ai_fair_price'] }, 1],
+                  },
+                },
+                else: 999,
+              },
+            },
+          },
+        },
+        { $sort: { _aiSortKey: sortOrder === 'desc' ? -1 : 1, createdAt: -1 } },
+        { $skip: skip },
+        { $limit: Number(limit) },
+        { $project: { _aiSortKey: 0 } },
+      ];
+      const [cars, total] = await Promise.all([
+        this.carModel.aggregate(pipeline),
+        this.carModel.countDocuments(filter),
+      ]);
+      return {
+        data: cars,
+        meta: {
+          total,
+          page: Number(page),
+          limit: Number(limit),
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    }
+
     const sort: any = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
 
     const [cars, total] = await Promise.all([
@@ -249,12 +302,22 @@ export class CarsService {
     id: string,
     updateCarDto: UpdateCarDto,
     newImageFilenames: string[] = [],
+    newDocumentFilenames: string[] = [],
   ): Promise<CarDocument> {
     const existing = await this.carModel.findById(id);
     if (!existing) throw new NotFoundException(`السيارة غير موجودة`);
 
-    const { imageUrl: _stripUrl, images: _stripImages, imageSlots, ...rest } = updateCarDto;
+    const {
+      imageUrl: _stripUrl,
+      images: _stripImages,
+      documentUrls: _stripDocs,
+      imageSlots,
+      ...rest
+    } = updateCarDto;
     const payload: any = { ...rest };
+    if (rest.imported === undefined && !existing.imported) {
+      payload.imported = 'local';
+    }
 
     const built = this.buildImageFieldsFromSlots(imageSlots, newImageFilenames);
     if (built) {
@@ -267,6 +330,11 @@ export class CarsService {
       }
       payload.imageUrl = built.imageUrl;
       payload.images = built.images;
+    }
+
+    if (newDocumentFilenames.length > 0) {
+      const added = newDocumentFilenames.map((name) => publicCarDocumentPath(name));
+      payload.documentUrls = [...(existing.documentUrls || []), ...added];
     }
 
     existing.set(payload);

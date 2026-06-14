@@ -33,6 +33,10 @@ export class Car {
   @Prop([String])
   images: string[];
 
+  /** وثائق السيارة (صور أو PDF) */
+  @Prop([String])
+  documentUrls: string[];
+
   @Prop()
   engineType: string;
 

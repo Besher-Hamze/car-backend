@@ -11,6 +11,7 @@ async function bootstrap() {
 
   const uploadRoot = join(process.cwd(), 'uploads');
   fs.mkdirSync(join(uploadRoot, 'cars'), { recursive: true });
+  fs.mkdirSync(join(uploadRoot, 'documents'), { recursive: true });
 
   app.useStaticAssets(uploadRoot, { prefix: '/uploads/' });
   app.setGlobalPrefix('api/v1');

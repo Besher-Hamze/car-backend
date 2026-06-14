@@ -14,7 +14,7 @@ import {
   HttpStatus,
   BadRequestException,
 } from '@nestjs/common';
-import { FilesInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiOperation,
@@ -36,27 +36,68 @@ import {
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { carImageStorage, carImageMulterLimits } from './car-image-upload';
+import {
+  carImageStorage,
+  carImageMulterLimits,
+  isAllowedCarImageMime,
+} from './car-image-upload';
+import {
+  carDocumentMulterLimits,
+  isAllowedCarDocumentMime,
+} from './car-document-upload';
+import { carMultipartStorage, carMultipartLimits } from './car-multipart-upload';
 
-/** Max images per car upload (seller submit + admin create/update). First → `imageUrl`, rest → `images`. */
+/** Max images per car upload. First → `imageUrl`, rest → `images`. */
 const MAX_CAR_IMAGES = 10;
+const MAX_CAR_DOCUMENTS = 10;
 
-type UploadedImageFile = { filename: string; mimetype: string; size: number };
+type UploadedImageFile = {
+  filename: string;
+  mimetype: string;
+  size: number;
+  originalname: string;
+};
 
 function validateUploadedImages(files: UploadedImageFile[] | undefined): UploadedImageFile[] {
   if (!files || files.length === 0) {
     throw new BadRequestException('يرجى رفع صورة واحدة على الأقل');
   }
   for (const f of files) {
-    if (!/^image\/(jpeg|png|gif|webp)$/i.test(f.mimetype)) {
-      throw new BadRequestException(`صيغة الصورة غير مدعومة: ${f.mimetype}`);
+    if (!isAllowedCarImageMime(f.mimetype, f.originalname)) {
+      throw new BadRequestException(
+        `صيغة الصورة غير مدعومة (${f.originalname || f.filename}): ${f.mimetype || 'unknown'}`,
+      );
     }
     if (f.size > carImageMulterLimits.fileSize) {
-      throw new BadRequestException('حجم الصورة يتجاوز الحد المسموح (5MB)');
+      throw new BadRequestException(
+        `حجم الصورة «${f.originalname || f.filename}» يتجاوز الحد المسموح (5MB)`,
+      );
     }
   }
   return files;
 }
+
+function validateUploadedDocuments(files: UploadedImageFile[] | undefined): UploadedImageFile[] {
+  if (!files?.length) return [];
+  for (const f of files) {
+    if (!isAllowedCarDocumentMime(f.mimetype, f.originalname)) {
+      throw new BadRequestException(
+        `صيغة الوثيقة غير مدعومة (${f.originalname || f.filename})`,
+      );
+    }
+    if (f.size > carDocumentMulterLimits.fileSize) {
+      throw new BadRequestException(
+        `حجم الوثيقة «${f.originalname || f.filename}» يتجاوز الحد (10MB)`,
+      );
+    }
+  }
+  return files;
+}
+
+type UploadedFilesMap = {
+  images?: UploadedImageFile[];
+  documents?: UploadedImageFile[];
+};
 
 @ApiTags('Cars - السيارات')
 @Controller('cars')
@@ -68,10 +109,13 @@ export class CarsController {
   @Roles('admin')
   @ApiBearerAuth()
   @UseInterceptors(
-    FilesInterceptor('images', MAX_CAR_IMAGES, {
-      storage: carImageStorage,
-      limits: carImageMulterLimits,
-    }),
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: MAX_CAR_IMAGES },
+        { name: 'documents', maxCount: MAX_CAR_DOCUMENTS },
+      ],
+      { storage: carMultipartStorage, limits: carMultipartLimits },
+    ),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -82,7 +126,12 @@ export class CarsController {
         images: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
-          description: 'صور السيارة. الأولى = صورة رئيسية، الباقي معرض.',
+          description: 'صور السيارة. الأولى = صورة رئيسية.',
+        },
+        documents: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'وثائق السيارة (صور أو PDF).',
         },
         brand: { type: 'string' },
         model: { type: 'string' },
@@ -100,10 +149,12 @@ export class CarsController {
   })
   @ApiOperation({ summary: 'إضافة سيارة جديدة مع صور (مسؤول فقط)' })
   @ApiResponse({ status: 201, description: 'تم إضافة السيارة بنجاح' })
-  create(@UploadedFiles() files: UploadedImageFile[], @Body() createCarDto: CreateCarDto) {
-    const validated = validateUploadedImages(files);
+  create(@UploadedFiles() files: UploadedFilesMap, @Body() createCarDto: CreateCarDto) {
+    const validated = validateUploadedImages(files?.images);
+    const docs = validateUploadedDocuments(files?.documents);
     const filenames = validated.map((f) => f.filename);
-    return this.carsService.create(createCarDto, filenames);
+    const docNames = docs.map((f) => f.filename);
+    return this.carsService.create(createCarDto, filenames, docNames);
   }
 
   /* ======================================================================
@@ -247,10 +298,13 @@ export class CarsController {
   @Roles('admin')
   @ApiBearerAuth()
   @UseInterceptors(
-    FilesInterceptor('images', MAX_CAR_IMAGES, {
-      storage: carImageStorage,
-      limits: carImageMulterLimits,
-    }),
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: MAX_CAR_IMAGES },
+        { name: 'documents', maxCount: MAX_CAR_DOCUMENTS },
+      ],
+      { storage: carMultipartStorage, limits: carMultipartLimits },
+    ),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -260,7 +314,12 @@ export class CarsController {
         images: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
-          description: 'صور جديدة فقط. استخدم imageSlots لترتيبها مع الصور الحالية.',
+          description: 'صور جديدة فقط.',
+        },
+        documents: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'وثائق جديدة (صور أو PDF).',
         },
         imageSlots: {
           type: 'string',
@@ -271,25 +330,21 @@ export class CarsController {
       },
     },
   })
-  @ApiOperation({ summary: 'تعديل بيانات سيارة (مسؤول فقط) — صور اختيارية' })
+  @ApiOperation({ summary: 'تعديل بيانات سيارة (مسؤول فقط)' })
   update(
     @Param('id') id: string,
-    @UploadedFiles() files: UploadedImageFile[] | undefined,
+    @UploadedFiles() files: UploadedFilesMap | undefined,
     @Body() updateCarDto: UpdateCarDto,
   ) {
-    const list = files ?? [];
-    if (list.length > 0) {
-      for (const f of list) {
-        if (!/^image\/(jpeg|png|gif|webp)$/i.test(f.mimetype)) {
-          throw new BadRequestException(`صيغة الصورة غير مدعومة: ${f.mimetype}`);
-        }
-        if (f.size > carImageMulterLimits.fileSize) {
-          throw new BadRequestException('حجم الصورة يتجاوز الحد المسموح (5MB)');
-        }
-      }
+    const imageList = files?.images ?? [];
+    const docList = files?.documents ?? [];
+    if (imageList.length > 0) {
+      validateUploadedImages(imageList);
     }
-    const filenames = list.map((f) => f.filename);
-    return this.carsService.update(id, updateCarDto, filenames);
+    const validatedDocs = validateUploadedDocuments(docList);
+    const filenames = imageList.map((f) => f.filename);
+    const docNames = validatedDocs.map((f) => f.filename);
+    return this.carsService.update(id, updateCarDto, filenames, docNames);
   }
 
   @Delete(':id')
