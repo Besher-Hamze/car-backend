@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { SparePartsModule } from './spare-parts/spare-parts.module';
 import { ComparisonModule } from './comparison/comparison.module';
 import { PriceEvaluationModule } from './price-evaluation/price-evaluation.module';
+import { PurchaseRequestsModule } from './purchase-requests/purchase-requests.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { PriceEvaluationModule } from './price-evaluation/price-evaluation.modul
     SparePartsModule,
     ComparisonModule,
     PriceEvaluationModule,
+    PurchaseRequestsModule,
   ],
 })
 export class AppModule { }
