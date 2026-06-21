@@ -104,7 +104,7 @@ export class PurchaseRequestsService {
     return this.purchaseModel
       .find({ sellerId: new Types.ObjectId(sellerId) })
       .sort({ createdAt: -1 })
-      .populate('carId', 'brand model year price imageUrl')
+      .populate('carId', 'brand model year price imageUrl documentUrls')
       .populate('buyerId', 'name email')
       .lean()
       .exec();
@@ -115,11 +115,46 @@ export class PurchaseRequestsService {
     return this.purchaseModel
       .find()
       .sort({ createdAt: -1 })
-      .populate('carId', 'brand model year price imageUrl')
+      .populate('carId', 'brand model year price imageUrl documentUrls')
       .populate('buyerId', 'name email')
       .populate('sellerId', 'name email')
       .lean()
       .exec();
+  }
+
+  async findOne(requestId: string, userId: string, role: string) {
+    const req = await this.purchaseModel
+      .findById(requestId)
+      .populate('carId', 'brand model year price imageUrl documentUrls currency')
+      .populate('buyerId', 'name email')
+      .populate('sellerId', 'name email')
+      .lean()
+      .exec();
+
+    if (!req) throw new NotFoundException('طلب الشراء غير موجود');
+
+    const buyerRef = req.buyerId as { _id?: Types.ObjectId } | Types.ObjectId | string;
+    const sellerRef = req.sellerId as { _id?: Types.ObjectId } | Types.ObjectId | string | undefined;
+
+    const buyerId =
+      typeof buyerRef === 'object' && buyerRef && '_id' in buyerRef
+        ? String(buyerRef._id)
+        : String(buyerRef);
+    const sellerId = sellerRef
+      ? typeof sellerRef === 'object' && '_id' in sellerRef
+        ? String(sellerRef._id)
+        : String(sellerRef)
+      : undefined;
+
+    const isBuyer = buyerId === userId;
+    const isSeller = sellerId === userId;
+    const isAdmin = role === 'admin';
+
+    if (!isBuyer && !isSeller && !isAdmin) {
+      throw new ForbiddenException('غير مصرح');
+    }
+
+    return req;
   }
 
   async respond(

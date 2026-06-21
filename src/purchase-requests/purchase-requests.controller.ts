@@ -106,6 +106,16 @@ export class PurchaseRequestsController {
     return this.service.findForSeller(user.userId);
   }
 
+  @Get(':id')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: { userId: string; role: string },
+  ) {
+    return this.service.findOne(id, user.userId, user.role);
+  }
+
   @Patch(':id/respond')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('seller', 'admin')
