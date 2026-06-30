@@ -13,6 +13,8 @@ async function bootstrap() {
   fs.mkdirSync(join(uploadRoot, 'cars'), { recursive: true });
   fs.mkdirSync(join(uploadRoot, 'documents'), { recursive: true });
   fs.mkdirSync(join(uploadRoot, 'purchase-ids'), { recursive: true });
+  fs.mkdirSync(join(uploadRoot, 'trade-photos'), { recursive: true });
+  fs.mkdirSync(join(uploadRoot, 'trade-proofs'), { recursive: true });
 
   app.useStaticAssets(uploadRoot, { prefix: '/uploads/' });
   app.setGlobalPrefix('api/v1');

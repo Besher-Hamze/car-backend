@@ -7,6 +7,7 @@ import { SparePartsModule } from './spare-parts/spare-parts.module';
 import { ComparisonModule } from './comparison/comparison.module';
 import { PriceEvaluationModule } from './price-evaluation/price-evaluation.module';
 import { PurchaseRequestsModule } from './purchase-requests/purchase-requests.module';
+import { TradeRequestsModule } from './trade-requests/trade-requests.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PurchaseRequestsModule } from './purchase-requests/purchase-requests.mo
     ComparisonModule,
     PriceEvaluationModule,
     PurchaseRequestsModule,
+    TradeRequestsModule,
   ],
 })
 export class AppModule { }
