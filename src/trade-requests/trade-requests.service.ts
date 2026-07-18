@@ -84,6 +84,9 @@ export class TradeRequestsService {
     if (!targetCar || targetCar.status !== CarStatus.PUBLISHED) {
       throw new NotFoundException('السيارة المطلوبة غير متاحة');
     }
+    if (targetCar.isAvailable === false) {
+      throw new BadRequestException('السيارة المطلوبة مباعة أو محجوزة');
+    }
 
     const ownerId = targetCar.sellerId?.toString();
     if (ownerId && ownerId === requesterId) {
@@ -115,6 +118,9 @@ export class TradeRequestsService {
       if (!listed) throw new NotFoundException('سيارتك المدرجة غير موجودة');
       if (listed.sellerId?.toString() !== requesterId) {
         throw new ForbiddenException('يمكنك اختيار سياراتك فقط');
+      }
+      if (listed.status !== CarStatus.PUBLISHED || listed.isAvailable === false) {
+        throw new BadRequestException('السيارة المعروضة في الداكيش غير متاحة');
       }
       offerCarId = listed._id as Types.ObjectId;
       offerBrand = listed.brand;
@@ -276,9 +282,32 @@ export class TradeRequestsService {
       if (!dto.ownerPhone?.trim()) {
         throw new BadRequestException('أدخل رقم تواصلك عند القبول');
       }
+
+      const tradedCarIds = [req.targetCarId, req.offerCarId].filter(
+        (id): id is Types.ObjectId => id != null,
+      );
+      const unavailableCar = await this.carModel
+        .findOne({
+          _id: { $in: tradedCarIds },
+          isAvailable: false,
+        })
+        .select('_id')
+        .lean()
+        .exec();
+      if (unavailableCar) {
+        throw new BadRequestException('إحدى سيارات الداكيش لم تعد متاحة');
+      }
+
       req.status = TradeRequestStatus.ACCEPTED;
       req.ownerPhone = dto.ownerPhone.trim();
       req.rejectionReason = undefined;
+
+      await this.carModel
+        .updateMany(
+          { _id: { $in: tradedCarIds } },
+          { $set: { isAvailable: false } },
+        )
+        .exec();
     } else {
       req.status = TradeRequestStatus.REJECTED;
       req.rejectionReason = dto.reason?.trim() || 'مرفوض';
